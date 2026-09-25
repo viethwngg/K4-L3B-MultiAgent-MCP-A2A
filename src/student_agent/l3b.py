@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 from datetime import UTC
@@ -484,14 +485,14 @@ async def solve(case: dict, gateway: Any, trace: Any) -> dict:
             decision_code=code,
         )
 
-    def handoff(actor: str, start: int, target: str = "verifier") -> None:
+    def handoff(actor: str, records: list[Evidence], target: str = "verifier") -> None:
         trace.emit(
             case_id=case_id,
             event_type="handoff",
             actor=actor,
             target=target,
             decision_code="EVIDENCE_READY",
-            evidence_refs=[e.ref for e in evidence[start:]][:20],
+            evidence_refs=[e.ref for e in records][:20],
         )
 
     assign("entity-agent", "RESOLVE_ORDER_AND_CUSTOMER")
@@ -501,14 +502,21 @@ async def solve(case: dict, gateway: Any, trace: Any) -> dict:
     entity, _, selected = resolve(case, evidence)
     claimed = case.get("customer_request", {}).get("claimed_order_id")
     candidates = list(dict.fromkeys([claimed, *case.get("candidate_order_ids", [])]))
+    entity_start = len(evidence)
     if selected:
         await fetch("get_order", "entity-agent", order_id=selected["order_id"])
     else:
-        for candidate in candidates[:5]:
-            if candidate:
-                await fetch("get_order", "entity-agent", order_id=candidate)
+        # Independent lookups keyed by different order ids: fire them concurrently
+        # instead of paying one MCP round-trip per candidate in sequence.
+        await asyncio.gather(
+            *(
+                fetch("get_order", "entity-agent", order_id=candidate)
+                for candidate in candidates[:5]
+                if candidate
+            )
+        )
     entity, _, selected = resolve(case, evidence)
-    handoff("entity-agent", 0, "coordinator")
+    handoff("entity-agent", evidence[entity_start:], "coordinator")
     if selected:
         order_id = selected["order_id"]
         claim_topics = {
@@ -522,33 +530,39 @@ async def solve(case: dict, gateway: Any, trace: Any) -> dict:
             "refund_pending",
             "refund_failed",
         }
-        for actor, code, names in (
-            (
+        need_refund = bool(claim_topics.intersection(refund_lookup_topics))
+
+        async def run_group(actor: str, code: str, names: list[str]) -> None:
+            assign(actor, code)
+            wanted = [name for name in names if name != "get_refund_timeline" or need_refund]
+            # Tools within a group take only order_id, so they're independent of
+            # each other too: fetch them concurrently rather than one at a time.
+            records = await asyncio.gather(
+                *(fetch(name, actor, order_id=order_id) for name in wanted)
+            )
+            handoff(actor, [record for record in records if record is not None])
+
+        # The three specialist agents each depend only on order_id, not on each
+        # other's results, so run their MCP round-trips concurrently instead of
+        # waiting for one agent to fully finish before starting the next.
+        await asyncio.gather(
+            run_group(
                 "order-product-agent",
                 "CHECK_ITEMS_AND_PRODUCTS",
                 ["get_order_items", "get_product_context"],
             ),
-            ("shipment-agent", "CHECK_SHIPMENT_TIMELINE", ["get_shipment_summary"]),
-            (
+            run_group("shipment-agent", "CHECK_SHIPMENT_TIMELINE", ["get_shipment_summary"]),
+            run_group(
                 "payment-agent",
                 "RECONCILE_PAYMENTS_AND_REFUNDS",
                 ["get_payment_timeline", "get_refund_timeline"],
             ),
-        ):
-            assign(actor, code)
-            start = len(evidence)
-            for name in names:
-                if name == "get_refund_timeline" and not claim_topics.intersection(
-                    refund_lookup_topics
-                ):
-                    continue
-                await fetch(name, actor, order_id=order_id)
-            handoff(actor, start)
+        )
     assign("policy-agent", "CHECK_APPLICABLE_POLICY")
-    start = len(evidence)
+    policy_start = len(evidence)
     if version := case.get("policy_version"):
         await fetch("get_policy", "policy-agent", policy_version=version)
-    handoff("policy-agent", start)
+    handoff("policy-agent", evidence[policy_start:])
     output = assess(case, evidence)
     trace.emit(
         case_id=case_id,
