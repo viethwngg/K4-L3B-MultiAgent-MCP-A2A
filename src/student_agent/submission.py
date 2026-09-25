@@ -68,6 +68,7 @@ def validate_artifacts(
     consumed: dict[str, set[str]] = {case_id: set() for case_id in expected}
     owners: dict[str, str] = {}
     lifecycle: dict[str, list[str]] = {case_id: [] for case_id in expected}
+    started: set[str] = set()
     for number, line in enumerate(trace_lines, 1):
         if not line.strip():
             continue
@@ -82,6 +83,10 @@ def validate_artifacts(
             raise ValueError(f"traces/trace.jsonl:{number}: duplicate event_id")
         seen_events.add(event["event_id"])
         case_id = event["case_id"]
+        if event["event_type"] == "case_received":
+            if case_id in started:
+                raise ValueError(f"traces/trace.jsonl:{number}: duplicate case lifecycle")
+            started.add(case_id)
         lifecycle[case_id].append(event["event_type"])
         if event["event_type"] == "tool_result_consumed":
             for ref in event.get("evidence_refs", []):

@@ -251,6 +251,22 @@ def test_artifact_provenance_checks(tmp_path, fault):
         assert len(lines) == 4
 
 
+def test_artifact_provenance_rejects_duplicate_case_lifecycle(tmp_path):
+    case, evidence = fixture_data()
+    case_id = case["case_id"]
+    output = assess(case, evidence)
+    (tmp_path / "outputs").mkdir()
+    (tmp_path / "outputs" / f"{case_id}.json").write_text(
+        json.dumps(output), encoding="utf-8"
+    )
+    trace = TraceWriter(tmp_path / "traces/trace.jsonl", contracts())
+    for _ in range(2):
+        trace.emit(case_id=case_id, event_type="case_received", actor="coordinator")
+    case_set = CaseSet("test-v1", "l3b", (case_id,), {case_id: case})
+    with pytest.raises(ValueError, match="duplicate case lifecycle"):
+        validate_artifacts(tmp_path, case_set, contracts())
+
+
 @pytest.mark.parametrize("interrupt", [False, True])
 def test_cli_reconnect_and_resume_preserve_verified_cases(tmp_path, monkeypatch, interrupt):
     from student_agent import cli
