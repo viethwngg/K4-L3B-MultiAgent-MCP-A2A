@@ -22,8 +22,18 @@ class CaseSet:
 def _object(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError(f"{path}: invalid UTF-8 JSON") from exc
+    except FileNotFoundError as exc:
+        raise ValueError(
+            f"{path}: file not found; extract the complete L3B input ZIP into the repository root"
+        ) from exc
+    except OSError as exc:
+        raise ValueError(f"{path}: cannot read file: {exc.strerror}") from exc
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"{path}: file is not valid UTF-8") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{path}: invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}"
+        ) from exc
     if not isinstance(value, dict):
         raise ValueError(f"{path}: expected a JSON object")
     return value

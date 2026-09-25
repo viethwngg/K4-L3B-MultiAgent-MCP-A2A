@@ -16,15 +16,41 @@ class EvidenceGateway:
     def __init__(self, session: ClientSession, contracts: Contracts) -> None:
         self._session = session
         self._contracts = contracts
+        self._tool_schemas: dict[str, dict[str, Any]] | None = None
 
     async def list_tools(self) -> list[str]:
-        response = await self._session.list_tools()
-        return sorted(tool.name for tool in response.tools)
+        return sorted(await self.describe_tools())
 
-    async def call(self, tool_name: str, *, case_id: str, **arguments: str) -> dict[str, Any]:
+    async def describe_tools(self) -> dict[str, dict[str, Any]]:
+        """Return the advertised input schema for every MCP tool.
+
+        Keeping discovery here avoids coupling the workflow to a particular MCP SDK
+        representation (the SDK has used both camelCase and snake_case attributes).
+        The public ``list_tools`` method is intentionally retained for compatibility
+        with simple/fake gateways used by tests.
+        """
+        if self._tool_schemas is not None:
+            return self._tool_schemas
+        response = await self._session.list_tools()
+        descriptions: dict[str, dict[str, Any]] = {}
+        for tool in response.tools:
+            schema = getattr(tool, "inputSchema", None)
+            if schema is None:
+                schema = getattr(tool, "input_schema", None)
+            descriptions[tool.name] = schema if isinstance(schema, dict) else {}
+        self._tool_schemas = dict(sorted(descriptions.items()))
+        return self._tool_schemas
+
+    async def call(self, tool_name: str, *, case_id: str, **arguments: Any) -> dict[str, Any]:
+        schemas = await self.describe_tools()
+        if tool_name not in schemas:
+            raise ValueError(f"Tool was not advertised by MCP discovery: {tool_name}")
         payload = {"case_id": case_id, **arguments}
         result = await self._session.call_tool(tool_name, arguments=payload)
-        if result.isError:
+        is_error = getattr(result, "isError", None)
+        if is_error is None:
+            is_error = getattr(result, "is_error", False)
+        if is_error:
             message = " ".join(
                 block.text for block in result.content if getattr(block, "text", None)
             )

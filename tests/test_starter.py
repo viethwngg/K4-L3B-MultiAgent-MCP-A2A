@@ -16,6 +16,23 @@ def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value), encoding="utf-8")
 
 
+def test_load_case_set_reports_missing_manifest(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="case-set.json: file not found"):
+        load_case_set(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [(b"\xff", "file is not valid UTF-8"), (b"{", "invalid JSON at line 1, column 2")],
+)
+def test_load_case_set_reports_invalid_manifest(
+    tmp_path: Path, content: bytes, message: str
+) -> None:
+    (tmp_path / "case-set.json").write_bytes(content)
+    with pytest.raises(ValueError, match=message):
+        load_case_set(tmp_path)
+
+
 def test_load_case_set_rejects_wrong_variant(tmp_path: Path) -> None:
     write_json(
         tmp_path / "case-set.json",

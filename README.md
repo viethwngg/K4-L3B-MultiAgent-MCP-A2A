@@ -151,6 +151,15 @@ day09 run
 day09 validate
 ```
 
+Nếu kết nối bị ngắt, tiếp tục cùng lượt chạy (giữ nguyên team, endpoint và input):
+
+```powershell
+day09 run --resume --workers 4
+```
+
+Lệnh `--resume` kiểm tra output và trace đã hoàn thành rồi chỉ chạy các case còn
+thiếu. Mặc định chạy tối đa 4 case đồng thời; dùng `--workers 1` để chạy tuần tự.
+
 Kết quả được tạo tại:
 
 ```text

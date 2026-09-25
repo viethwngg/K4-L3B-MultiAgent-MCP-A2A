@@ -12,10 +12,18 @@ from .contracts import Contracts
 class TraceWriter:
     """Append observable workflow events. Never put prompts or chain-of-thought here."""
 
-    def __init__(self, path: Path, contracts: Contracts) -> None:
+    def __init__(self, path: Path, contracts: Contracts, *, buffered: bool = False) -> None:
         self.path = path
         self.contracts = contracts
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.buffered = buffered
+        self._lines: list[str] = []
+
+    def flush(self) -> None:
+        if self._lines:
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write("".join(self._lines))
+            self._lines.clear()
 
     def emit(
         self,
@@ -46,6 +54,10 @@ class TraceWriter:
         }
         event.update({key: value for key, value in optional.items() if value is not None})
         self.contracts.validate_trace(event, "trace event")
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+        line = json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n"
+        if self.buffered:
+            self._lines.append(line)
+        else:
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
         return event

@@ -65,6 +65,9 @@ def validate_artifacts(
         raise ValueError("traces/trace.jsonl is missing or not UTF-8") from exc
     normalized_lines: list[str] = []
     seen_events: set[str] = set()
+    consumed: dict[str, set[str]] = {case_id: set() for case_id in expected}
+    owners: dict[str, str] = {}
+    lifecycle: dict[str, list[str]] = {case_id: [] for case_id in expected}
     for number, line in enumerate(trace_lines, 1):
         if not line.strip():
             continue
@@ -78,7 +81,33 @@ def validate_artifacts(
         if event["event_id"] in seen_events:
             raise ValueError(f"traces/trace.jsonl:{number}: duplicate event_id")
         seen_events.add(event["event_id"])
+        case_id = event["case_id"]
+        lifecycle[case_id].append(event["event_type"])
+        if event["event_type"] == "tool_result_consumed":
+            for ref in event.get("evidence_refs", []):
+                if ref in owners and owners[ref] != case_id:
+                    raise ValueError(f"evidence reference is shared across cases: {ref}")
+                owners[ref] = case_id
+                consumed[case_id].add(ref)
+        elif not set(event.get("evidence_refs", [])) <= consumed[case_id]:
+            raise ValueError(f"traces/trace.jsonl:{number}: evidence used before consumption")
         normalized_lines.append(json.dumps(event, ensure_ascii=False, separators=(",", ":")))
+
+    for case_id, output in outputs.items():
+        events = lifecycle[case_id]
+        if (
+            not events
+            or events[0] != "case_received"
+            or events[-1] != "case_finalized"
+            or "verification_completed" not in events
+        ):
+            raise ValueError(f"{case_id}: missing or incomplete verified workflow trace")
+        refs = set(output["evidence_refs"])
+        refs.update(
+            ref for claim in output.get("claim_assessments", []) for ref in claim["evidence_refs"]
+        )
+        if not refs <= consumed[case_id]:
+            raise ValueError(f"{case_id}: output references evidence not consumed in this case")
 
     serialized = [json.dumps(value, ensure_ascii=False) for value in outputs.values()]
     if SECRET_PATTERN.search("\n".join([*serialized, *normalized_lines])):
