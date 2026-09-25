@@ -207,7 +207,7 @@ def test_workflow_scopes_calls_and_trace(tmp_path):
     gateway = Gateway()
     trace = TraceWriter(tmp_path / "trace.jsonl", contracts())
     output = asyncio.run(solve_case(case, gateway, trace))
-    assert len(gateway.calls) == 8
+    assert len(gateway.calls) == 7
     assert all(call[1] == case["case_id"] for call in gateway.calls)
     events = [json.loads(line) for line in trace.path.read_text().splitlines()]
     consumed = {

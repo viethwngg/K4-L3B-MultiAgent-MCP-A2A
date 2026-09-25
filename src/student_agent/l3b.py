@@ -275,7 +275,7 @@ def payment_analysis(evidence: list[Evidence]) -> dict:
         ]
         if captured > expected + Decimal("0.01") and len(captures) > 1:
             verdict = "duplicate_capture"
-        elif abs(captured - expected) > Decimal("0.01"):
+        elif abs(captured - expected) > Decimal("0.01") and len(captures) > 1:
             verdict = "capture_mismatch"
         else:
             verdict = "reconciled"
@@ -511,6 +511,17 @@ async def solve(case: dict, gateway: Any, trace: Any) -> dict:
     handoff("entity-agent", 0, "coordinator")
     if selected:
         order_id = selected["order_id"]
+        claim_topics = {
+            str(claim.get("topic", ""))
+            for claim in case.get("customer_request", {}).get("claims", [])
+            if isinstance(claim, dict)
+        }
+        refund_lookup_topics = {
+            "canceled_order_paid",
+            "unavailable_order_paid",
+            "refund_pending",
+            "refund_failed",
+        }
         for actor, code, names in (
             (
                 "order-product-agent",
@@ -527,6 +538,10 @@ async def solve(case: dict, gateway: Any, trace: Any) -> dict:
             assign(actor, code)
             start = len(evidence)
             for name in names:
+                if name == "get_refund_timeline" and not claim_topics.intersection(
+                    refund_lookup_topics
+                ):
+                    continue
                 await fetch(name, actor, order_id=order_id)
             handoff(actor, start)
     assign("policy-agent", "CHECK_APPLICABLE_POLICY")

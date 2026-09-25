@@ -20,11 +20,13 @@ A per-case argument cache prevents duplicate requests, including repeated failur
 No evidence is cached across cases or runs. One retry is allowed for connection or
 timeout errors; tool and validation errors are not retried.
 
-A normal case uses eight calls: customer history, order, items, product context,
-shipment summary, payment timeline, refund timeline, and policy. Payment timeline
-already includes payment records, so a redundant payment-summary call is avoided.
-Seller identifiers come from item evidence. Tool failures lower confidence;
-missing refund evidence produces null refund totals, not fabricated zero totals.
+A normal case uses seven calls: customer history, order, items, product context,
+shipment summary, payment timeline, and policy. Refund timeline is added only for
+claims that can be about a pending/failed refund or a paid canceled/unavailable
+order. Payment timeline already includes payment records, so a redundant
+payment-summary call is avoided. Seller identifiers come from item evidence. Tool
+failures lower confidence; missing refund evidence produces null refund totals, not
+fabricated zero totals.
 
 ## Entity resolution and source conflicts
 
@@ -50,8 +52,9 @@ the in-memory analytical view selects relevant rows.
 The workflow independently reports entity resolution, customer history, shipment
 and payment findings, primary and secondary issues, claim assessments, source
 conflicts, and policy-based resolution. It computes amounts with Decimal, separates
-split payments from excess captures, and distinguishes absent refund evidence from
-a successful empty refund history. Policy amounts are capped at the observed
+split payments from excess captures, and does not call a single capture a mismatch
+when the source has no explicit reconciliation signal. It distinguishes absent
+refund evidence from a successful empty refund history. Policy amounts are capped at the observed
 remaining captured balance when available. Seller responsibility must use an ID
 from the resolved order evidence. Missing core evidence or unresolved entities
 produce an investigation result with no recommended refund.
